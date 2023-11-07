@@ -7,7 +7,7 @@ filename = "BASIC5000_0269.wav";
 [nSamples, nCh] = size(signal);
 
 nFft = 2048;
-nOverlap = 4;
+nOverlap = 2;
 nHop = nFft / nOverlap;
 winFunc = hann(nFft);
 
