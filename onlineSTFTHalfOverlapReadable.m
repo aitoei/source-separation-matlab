@@ -9,9 +9,9 @@ filename = "BASIC5000_0269.wav";
 nFft = 2048;
 nOverlap = 2;
 nHop = nFft / nOverlap;
-winFunc = hann(nFft, "periodic");
+winFunc = hamming(nFft, "periodic");
 
-nFrame = floor(nSamples / nHop) - 1;
+nFrame = floor(nSamples / nHop) - nOverlap;
 
 
 sigDelay = zeros(nHop, nCh);
@@ -19,15 +19,16 @@ sigOut = zeros(nSamples, nCh);
 processedSig = zeros(nFft, nCh);
 processedSigDelay = zeros(nHop, nCh);
 
+wSum = zeros(nSamples, nCh);
 for iFrame=1:nFrame
     %% Extract Signal
     startIndex = (iFrame - 1) * nHop + 1;
-    endIndex = startIndex + nHop - 1;    
+    endIndex = startIndex + nFft - 1;    
     sig = signal(startIndex:endIndex);
-    sigPartial = [sigDelay; sig];
+
     
     %% FFT
-    sigPartial = sigPartial .* winFunc;    
+    sigPartial = sig .* winFunc;
     spectra = fft(sigPartial);
     
     %% processing
@@ -35,11 +36,13 @@ for iFrame=1:nFrame
     
     %% IFFT
     processedSig = (real(ifft(spectra)) .* winFunc);
-    
     %% Overlap add
-    sigOut(startIndex:endIndex) = (processedSig(1:nHop) + processedSigDelay);
-    
-    %% Delay Update
-    sigDelay = sig;
-    processedSigDelay = processedSig(nHop+1:end);    
+    sigOut(startIndex:endIndex) = sigOut(startIndex:endIndex) + processedSig;
+    wSum(startIndex:endIndex) = wSum(startIndex:endIndex) + winFunc.^2;
 end
+pos = (wSum ~= 0);
+sigOut(pos) = sigOut(pos) ./ wSum(pos);
+plot(signal);
+hold on;
+plot(sigOut)
+legend(["original", "fft"])

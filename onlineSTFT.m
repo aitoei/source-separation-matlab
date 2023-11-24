@@ -66,10 +66,10 @@ for iFrame=1:nFrame
     processedSig = ifft(spectra) .* winFunc;
 
     %% Get delay processed signal from buffer
-    for iCh=1:nCh
-        for iSample=0:nHop-1
-            index = mod(iSample + processedSigDelayPtr, nHop*nDelay);
-            getBuffer(iSample+1) = processedSigDelay(index);
+    for iSample=0:nHop-1
+        index = mod(iSample + processedSigDelayPtr, nHop*nDelay);
+        for iCh=1:nCh
+            getBuffer(iSample+1) = processedSigDelay(index+1, iCh);
         end
     end
     processedSigDelayPtr = mod(processedSigDelayPtr + nHop, nFft);
@@ -79,18 +79,14 @@ for iFrame=1:nFrame
 
     %% Update Processed buffer
     for iCh=1:nCh
-        for iSample=(0:nHop*nDelay-1)
-            index = mod(iSample + sigDelayPtr, nHop*nDelay);
-            sigPartial(iSample+1, iCh) = sigDelay(index+1, iCh);
+        for iSample=(0:nHop*(nDelay-1)-1)
+            index = mod(iSample + processedSigDelayPtr, nHop*nDelay);
+            processedSigDelay(index+1, iCh) = processedSigDelay(index+1, iCh) + processedSig(nHop+iSample+1, iCh);
+        end
+
+        for iSample=nHop*(nDelay-1):nHop*nDelay-1
+            index = mod(iSample + processedSigDelayPtr, nHop*nDelay);
+            processedSigDelay(index+1, iCh) = processedSig(nHop+iSample+1, iCh);            
         end
     end
-    
-
-    
-    %% Overlap add
-%     sigOut(startIndex:endIndex) = (processedSig(1:nHop) + processedSigDelay);
-    
-    %% Delay Update
-%     sigDelay = sig;
-%     processedSigDelay = processedSig(nHop+1:end);    
 end
