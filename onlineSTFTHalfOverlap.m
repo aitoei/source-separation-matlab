@@ -19,6 +19,12 @@ sigOut = zeros(nSamples, nCh);
 processedSig = zeros(nFft, nCh);
 processedSigDelay = zeros(nHop, nCh);
 
+tmp = zeros(nFft*2, 1);
+tmp(1:nFft) = winFunc.^2;
+tmp(nHop+1:nHop+nFft) = tmp(nHop+1:nHop+nFft) + winFunc.^2;
+tmp(nFft+1:nFft+nFft) = tmp(nFft+1:nFft+nFft) + winFunc.^2;
+scaling = 1./ tmp(nHop+1:nHop+nFft);
+
 for iFrame=1:nFrame
     %% Extract Signal
     startIndex = (iFrame - 1) * nHop + 1;

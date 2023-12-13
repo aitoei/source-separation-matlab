@@ -46,3 +46,6 @@ plot(signal);
 hold on;
 plot(sigOut)
 legend(["original", "fft"])
+
+figure();
+plot(signal(1:end-nFft)-sigOut(1:end-nFft));
