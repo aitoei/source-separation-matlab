@@ -37,7 +37,20 @@ scalingtmp(1:nFft) = winFunc.^2;
 scalingtmp(nHop+1:nHop+nFft) = scalingtmp(nHop+1:nHop+nFft) + winFunc.^2;
 
 scaling = 1./scalingtmp(nHop+1:nHop+nHop);
+nBins = nFft/2+1;
 
+%% 
+Wf = complex(eye(nCh));
+W  = repmat(Wf, 1, 1, nBins);
+
+est = complex(zeros(nBins, nCh));
+
+covariance  = zeros(nBins, nCh, nCh);
+covarianceZ1= zeros(nBins, nCh, nCh);
+
+powerSpectra = zeros(nCh, nBins);
+YkfEst = zeros(nCh, nBins);
+forgetCoefs = 0.5;
 
 
 for iFrame=1:nFrame
@@ -55,14 +68,60 @@ for iFrame=1:nFrame
     for iCh=1:nCh
         spectra(iCh,:) = fft(sigPartial(iCh, :) .* winFunc);
     end
-    spectraHalf = spectra(:, 1:nFft/2+1);
+    spectraHalf = spectra(:, 1:nBins);
     
+    Xkf = spectraHalf;
     %% processing
-    magnitude = abs(spectraHalf);
-    phase = angle(spectraHalf);
+    for iIter=1:10
+        %% Multiply demix matrix for each bin
+        for iBin=1:(nBins)
+            YkfEst(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
+        end
+        %% Calculate power spectrogram
+        for iCh=1:nCh
+            for iBin=1:nBins
+                powerSpectra(iCh, iBin) = real(YkfEst(iCh, iBin)).^2 + imag(YkfEst(iCh, iBin));
+            end
+        end
+        %% Calculate source model (Gauss) 全周波数が共通分散
+        r = sum(powerSpectra, 2);
+
+        %% Calculate weighted Covariance ( sphercical laplace distribution )
+        weight = 1 ./ (2 * r);
+        
+        for iBin=1:nBins
+            covariance(iBin, :, :) = weight .* Xkf(:, iBin) * Xkf(:, iBin)';
+        end
+
+        %% Update demix matrix
+        v = zeros(nCh, 1);  % source stering
+        for iBin=1:nBins
+            for iCh=1:nCh
+                for iiCh=1:nCh
+                    d = W(:, iCh, iBin)' * squeeze(covariance(iBin,:,:)) * W(:, iCh, iBin);
+                    if iCh~=iiCh
+                        u = W(:, iiCh, iBin)' * squeeze(covariance(iBin,:,:)) * W(:, iCh, iBin);
+                        v(iiCh, 1) = u / d;
+                    else
+                        v(iiCh, 1) = 1 - sqrt(d);
+                    end
+                end
+                W(:,:, iBin) = W(:,:, iBin) - v * W(:, iCh, iBin)';
+            end
+        end
+    end
+        
+    %% Separation
+    Ykf = complex(zeros(nCh, nBins));
+    for iBin=1:nBins
+        Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
+    end
+
+    
 
 
-    processedSigSpectraHalf = magnitude .* exp(1j*phase);
+
+    processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];
     
     %% IFFT
@@ -90,3 +149,7 @@ Expect = [zeros(nCh, nHop) mixSig];
 Expect = Expect(1, 1:endIndex);
 Result = sigOut(1, 1:endIndex);
 plot(Expect - Result);
+
+function d = contrast(y)
+    d = 2 * ones(size(y));
+end
