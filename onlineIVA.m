@@ -45,8 +45,8 @@ W  = repmat(Wf, 1, 1, nBins); % (nCh x nCh x nBins)
 
 est = complex(zeros(nBins, nCh));
 
-covariance  = zeros(nCh, nCh, nBins);
-covarianceZ1= zeros(nCh, nCh, nBins);
+Ukf  = zeros(nCh, nCh, nCh, nBins);
+UkfZ1= zeros(nCh, nCh, nCh, nBins);
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
@@ -72,7 +72,7 @@ for iFrame=1:nFrame
     
     Xkf = spectraHalf;
     %% processing
-    for iIter=1:1
+    for iIter=1:2
         %% Multiply demix matrix for each bin
         for iBin=1:(nBins)
             YkfEst(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
@@ -89,48 +89,55 @@ for iFrame=1:nFrame
         %% Calculate weighted Covariance ( sphercical laplace distribution )
         weight = 1 ./ (2 * r);
         
-        Ukf = zeros(nCh, nCh, nCh, nBins);
         for iBin=1:nBins
             for iCh=1:nCh
-                Ukf(iCh, :, :, iBin) = weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)';
+                Ukf(iCh, :, :, iBin) = (weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)') * forgetCoefs + Ukf(iCh) .* (1-forgetCoefs);
             end
         end
 
         %% Update demix matrix
-%         E = complex(eye(nCh));
-%         for iBin=1:nBins
-%             for iCh=1:nCh
-%                 WU = W(:, :, iBin) * squeeze(Ukf(iCh, :, :, iBin));
-%                 w_n = WU \ eye(complex)
-% 
-%             end
-%         end
-        v = zeros(nCh, 1);  % source stering
+        E = complex(eye(nCh));
         for iBin=1:nBins
             for iCh=1:nCh
-                for iiCh=1:nCh
-                    d = W(:, iCh, iBin)' * squeeze(covariance(iBin,:,:)) * W(:, iCh, iBin);
-                    if iCh~=iiCh
-                        u = W(:, iiCh, iBin)' * squeeze(covariance(iBin,:,:)) * W(:, iCh, iBin);
-                        v(iiCh, 1) = u / d;
-                    else
-                        v(iiCh, 1) = 1 - sqrt(d);
-                    end
-                end
-                W(:,:, iBin) = W(:,:, iBin) - v * W(:, iCh, iBin)';
+                WU = W(:, :, iBin) * squeeze(Ukf(iCh, :, :, iBin)) + eye(nCh)*1e-3;
+                WUinv = inv(WU);
+                W(:,iCh,iBin) = WUinv(:,iCh);
+                W(:,iCh,iBin) = W(:,iCh,iBin) / sqrt(W(:,iCh,iBin)' * squeeze(Ukf(iCh, :, :, iBin)) * W(:,iCh,iBin));
             end
         end
+%         v = zeros(nCh, 1);  % source stering
+%         for iBin=1:nBins
+%             for iCh=1:nCh
+%                 for iiCh=1:nCh
+%                     d = W(:, iiCh, iBin)' * squeeze(Ukf(iCh,:,:, iBin)) * W(:, iiCh, iBin);
+%                     if iCh~=iiCh
+%                         u = W(:, iCh, iBin)' * squeeze(Ukf(iCh,:,:, iBin)) * W(:, iCh, iBin);
+%                         v(iiCh, 1) = u / d;
+%                     else
+%                         v(iiCh, 1) = 1 - 1/sqrt(d);
+%                     end
+%                 end
+%                 W(:,:, iBin) = W(:,:, iBin) - v * W(:, iCh, iBin)';
+%             end
+%         end
+    end
+%     cost(iFrame) = local_calcCostFunction(powerSpectra, W, nBins, 1)
+
+    %% Bakc projection
+    eA = zeros(nCh, nCh);
+    for iBin=1:nBins
+         A = inv(W(:,:, iBin)');
+         for iCh=1:nCh
+             eA(iCh,iCh) = A(1,iCh);
+         end
+         W(:,:,iBin) = eA * W(:,:,iBin);         
     end
 %         
     %% Separation
     Ykf = complex(zeros(nCh, nBins));
-%     for iBin=1:nBins
-%         Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
+    for iBin=1:nBins
+        Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
     end
-
-    
-
-
 
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];
@@ -161,6 +168,11 @@ Expect = Expect(1, 1:endIndex);
 Result = sigOut(1, 1:endIndex);
 plot(Expect - Result);
 
-function d = contrast(y)
-    d = 2 * ones(size(y));
+%% Local function for calculating cost function value in IVA
+function [ cost ] = local_calcCostFunction(P, W, I, J)
+logDetAbsW = zeros(I,1);
+for i = 1:I
+    logDetAbsW(i,1) = log(max(abs(det(W(:,:,i))), eps));
+end
+cost = sum(sqrt(sum(P, 3)), 'all')/J - 2*sum(logDetAbsW, 'all');
 end
