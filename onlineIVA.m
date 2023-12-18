@@ -16,11 +16,11 @@ end
 
 [nCh, nSamples] = size(mixSig);
 
-nFft = 2048;
+nFft = 4096;
 nOverlap = 2;
 nDelay = nOverlap - 1;
 nHop = nFft / nOverlap;
-winFunc = hann(nFft, "periodic").';
+winFunc = hamming(nFft, "periodic").';
 
 nFrame = floor(nSamples / nHop) - 1;
 
@@ -41,12 +41,12 @@ nBins = nFft/2+1;
 
 %% 
 Wf = complex(eye(nCh));
-W  = repmat(Wf, 1, 1, nBins);
+W  = repmat(Wf, 1, 1, nBins); % (nCh x nCh x nBins)
 
 est = complex(zeros(nBins, nCh));
 
-covariance  = zeros(nBins, nCh, nCh);
-covarianceZ1= zeros(nBins, nCh, nCh);
+covariance  = zeros(nCh, nCh, nBins);
+covarianceZ1= zeros(nCh, nCh, nBins);
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
@@ -72,7 +72,7 @@ for iFrame=1:nFrame
     
     Xkf = spectraHalf;
     %% processing
-    for iIter=1:10
+    for iIter=1:1
         %% Multiply demix matrix for each bin
         for iBin=1:(nBins)
             YkfEst(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
@@ -80,20 +80,31 @@ for iFrame=1:nFrame
         %% Calculate power spectrogram
         for iCh=1:nCh
             for iBin=1:nBins
-                powerSpectra(iCh, iBin) = real(YkfEst(iCh, iBin)).^2 + imag(YkfEst(iCh, iBin));
+                powerSpectra(iCh, iBin) = real(YkfEst(iCh, iBin)).^2 + imag(YkfEst(iCh, iBin)).^2;
             end
         end
         %% Calculate source model (Gauss) 全周波数が共通分散
-        r = sum(powerSpectra, 2);
-
+%         r(iFrame,:) = sqrt(sum(powerSpectra, 2));
+        r = sqrt(sum(powerSpectra, 2)); % (nSource x 1)
         %% Calculate weighted Covariance ( sphercical laplace distribution )
         weight = 1 ./ (2 * r);
         
+        Ukf = zeros(nCh, nCh, nCh, nBins);
         for iBin=1:nBins
-            covariance(iBin, :, :) = weight .* Xkf(:, iBin) * Xkf(:, iBin)';
+            for iCh=1:nCh
+                Ukf(iCh, :, :, iBin) = weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)';
+            end
         end
 
         %% Update demix matrix
+%         E = complex(eye(nCh));
+%         for iBin=1:nBins
+%             for iCh=1:nCh
+%                 WU = W(:, :, iBin) * squeeze(Ukf(iCh, :, :, iBin));
+%                 w_n = WU \ eye(complex)
+% 
+%             end
+%         end
         v = zeros(nCh, 1);  % source stering
         for iBin=1:nBins
             for iCh=1:nCh
@@ -110,11 +121,11 @@ for iFrame=1:nFrame
             end
         end
     end
-        
+%         
     %% Separation
     Ykf = complex(zeros(nCh, nBins));
-    for iBin=1:nBins
-        Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
+%     for iBin=1:nBins
+%         Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
     end
 
     
