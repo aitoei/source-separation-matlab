@@ -57,18 +57,18 @@ end
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
-forgetCoefs = 0.5;
+forgetCoefs = 0.999;
 
 
 for iFrame=1:nFrame
     %% Extract Signal
     startIndex = (iFrame - 1) * nHop + 1;
-    endIndex = startIndex + nHop - 1;    
+    endIndex = startIndex + nFft - 1;
     sig = mixSig(:, startIndex:endIndex);
    
 
     %% make FFT Frame
-    sigPartial = [sigDelay sig];
+    sigPartial = sig;
     
     %% FFT
     spectra = zeros(nCh, nFft);
@@ -95,57 +95,43 @@ for iFrame=1:nFrame
 %         r(iFrame,:) = sqrt(sum(powerSpectra, 2));
         r = sum(powerSpectra, 2); % (nSource x 1)
         %% Calculate weighted Covariance ( sphercical laplace distribution )
-        weight = 1 ./ (2 * r);
-        
+%         weight = 1 ./ (2 * r);
+        weight = (1-forgetCoefs).*(1 ./ (2 * sqrt(r)));
         for iBin=1:nBins
+            %% Update covariance matrix
             for iCh=1:nCh
                 Ucur = (weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)');
                 Upre = squeeze(Ukf(iCh, :, :, iBin));
                 U = Upre * forgetCoefs +  (1 - forgetCoefs) * Ucur;
                 Ukf(iCh, :, :, iBin) = U;
             end
-        end
-
-        %% Update demix matrix
-        for iBin=1:nBins
+            %% Update demix matrix
             Wf = W(:, :, iBin);
             Wnew = zeros(nCh, nCh);
             for iCh=1:nCh
                 U = squeeze(Ukf(iCh, :, :, iBin));
-                WU = Wf * U  + eye(nCh)*1e-3;
+                WU = Wf * U  + eye(nCh)*1e-6;
                 WUinv = inv(WU);
-                Wnew(:, iCh) = WUinv(:, iCh);
-%                 d = sqrt(Wf(:,iCh)' * U * Wf(:,iCh));
-%                 W(:,iCh,iBin) = WUinv(:,iCh);
-%                 W(:,iCh,iBin) = W(:,iCh,iBin) / sqrt(W(:,iCh,iBin)' * squeeze(Ukf(iCh, :, :, iBin)) * W(:,iCh,iBin));
+                Wnew(:, iCh) = conj(WUinv(:, iCh));
             end
-            W(:,:,iBin) = Wnew;
-            Ykf(:,iBin) = (Wnew * Xkf(:, iBin));
+            W(:, :, iCh) = Wnew';
+
+            %% Projection back
+            A = inv(Wnew');
             
-            A = inv(Wnew);
+            scaleW = zeros(nCh, nCh);
             for iCh=1:nCh
-                Ykf(iCh,iBin) = A(iCh,:) * (Wnew * Xkf(:, iBin));
+                scaleW(iCh, iCh) = A(iCh,iCh);
             end
+
+            Wnew = scaleW * Wnew';
+            
+            %% Separation
+            Ykf(:, iBin) = Wnew' * Xkf(:, iBin);
+
+
         end
     end
-
-
-    %% Bakc projection
-%     eA = zeros(nCh, nCh);
-%     for iBin=1:nBins
-%          A = inv(W(:,:, iBin)');
-%          for iCh=1:nCh
-%              eA(iCh,iCh) = A(1,iCh);
-%          end
-%          W(:,:,iBin) = eA * W(:,:,iBin);         
-%     end
-%         
-    %% Separation
-%     Ykf = complex(zeros(nCh, nBins));
-%     for iBin=1:nBins
-%         Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
-%     end
-
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];
     
@@ -155,13 +141,7 @@ for iFrame=1:nFrame
     end
     
     %% Overlap Add
-    sigOut(:, startIndex:endIndex) = (processedSig(:, 1:nHop) + processedSigDelay) .* scaling;
-
-
-    %% Delay
-    processedSigDelay = processedSig(:, nHop+1:nFft);
-    sigDelay = sig;
-
+    sigOut(:, startIndex:endIndex) = sigOut(:, startIndex:endIndex) + (processedSig);
 end
 
 plot([zeros(1, nHop) mixSig(1,:)]);
