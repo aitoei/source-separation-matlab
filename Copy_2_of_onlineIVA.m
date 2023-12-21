@@ -20,9 +20,10 @@ nFft = 512;
 nOverlap = 2;
 nDelay = nOverlap - 1;
 nHop = nFft / nOverlap;
-% winFunc = hamming(nFft, "periodic").';
-w=hann(nFft, 'periodic');
-winFunc=sqrt(w*2.0*nHop/nFft).';
+% winFunc = hann(nFft, "periodic").';
+w = hann(nFft, "periodic").';
+winFunc=sqrt(w*2.0*nHop/nFft);
+
 
 nFrame = floor(nSamples / nHop) - 1;
 
@@ -47,17 +48,17 @@ W  = repmat(Wf, 1, 1, nBins); % (nCh x nCh x nBins)
 
 est = complex(zeros(nBins, nCh));
 
-
 Ukf  = zeros(nCh, nCh, nCh, nBins);
-for iBin=1:nBins
-    for iCh=1:nCh
-        Ukf(iCh,:,:, iBin) = complex(eye(nCh))*1e-3;
+for iCh=1:nCh
+    for iBin=1:nBins
+        Ukf(iCh,:,:,iBin) = eye(nCh) * 1e-3;
     end
 end
+UkfZ1= Ukf;
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
-forgetCoefs = 0.999;
+forgetCoefs = 0.9;
 
 
 for iFrame=1:nFrame
@@ -78,7 +79,6 @@ for iFrame=1:nFrame
     spectraHalf = spectra(:, 1:nBins);
     
     Xkf = spectraHalf;
-    Ykf = zeros(size(Xkf));
     %% processing
     for iIter=1:1
         %% Multiply demix matrix for each bin
@@ -93,58 +93,98 @@ for iFrame=1:nFrame
         end
         %% Calculate source model (Gauss) 全周波数が共通分散
 %         r(iFrame,:) = sqrt(sum(powerSpectra, 2));
-        r = sum(powerSpectra, 2); % (nSource x 1)
+        r = sqrt(sum(powerSpectra, 2)); % (nSource x 1)
         %% Calculate weighted Covariance ( sphercical laplace distribution )
-        weight = 1 ./ (2 * r);
+        weight = 1 ./ (2 * r) * 0.01;
+%         weight = (1-forgetCoefs) * (1 ./ (r * 2));
         
         for iBin=1:nBins
             for iCh=1:nCh
-                Ucur = (weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)');
-                Upre = squeeze(Ukf(iCh, :, :, iBin));
-                U = Upre * forgetCoefs +  (1 - forgetCoefs) * Ucur;
-                Ukf(iCh, :, :, iBin) = U;
+                Ukf(iCh, :, :, iBin) = forgetCoefs * squeeze(Ukf(iCh, :, :, iBin)) + weight(iCh) * (Xkf(:, iBin) * Xkf(:, iBin)');
             end
         end
 
         %% Update demix matrix
+        Wfnew = zeros(nCh);
         for iBin=1:nBins
             Wf = W(:, :, iBin);
-            Wnew = zeros(nCh, nCh);
+            D = eye(nCh, nCh);
             for iCh=1:nCh
-                U = squeeze(Ukf(iCh, :, :, iBin));
-                WU = Wf * U  + eye(nCh)*1e-3;
+                WU = Wf * squeeze(Ukf(iCh, :, :, iBin)) + eye(nCh)*1e-6;
                 WUinv = inv(WU);
-                Wnew(:, iCh) = WUinv(:, iCh);
-%                 d = sqrt(Wf(:,iCh)' * U * Wf(:,iCh));
-%                 W(:,iCh,iBin) = WUinv(:,iCh);
-%                 W(:,iCh,iBin) = W(:,iCh,iBin) / sqrt(W(:,iCh,iBin)' * squeeze(Ukf(iCh, :, :, iBin)) * W(:,iCh,iBin));
-            end
-            W(:,:,iBin) = Wnew;
-            Ykf(:,iBin) = (Wnew * Xkf(:, iBin));
-            
-            A = inv(Wnew);
-            for iCh=1:nCh
-                Ykf(iCh,iBin) = A(iCh,:) * (Wnew * Xkf(:, iBin));
-            end
-        end
-    end
+                wkf = WUinv(:,iCh);
 
+%                 d = sqrt(wkf' * squeeze(Ukf(iCh, :, :, iBin)) * wkf);
+%                 wkf = wkf / d;
+                Wfnew(:, iCh) = wkf;
+
+                D(iCh,:) = wkf';
+            end
+            %% Scaling
+            D = 
+            W(:,:,iBin) = Wfnew;
+%             A=inv(D);
+% 
+%             if abs(A(1, 1))>=abs(A(2, 1))
+%                 a1=A(1, 1);
+%             else
+%                 a1=A(2, 1);
+%             end
+% 
+%             if abs(A(2, 2))>=abs(A(1, 2))
+%                 a2=A(2, 2);
+%             else
+%                 a2=A(1, 2);
+%             end
+% 
+%             Wfnew=eye(nCh, nCh);
+%             Wfnew(1, :)=a1*D(1,:)';
+%             Wfnew(2, :)=a2*D(2,:)';
+% 
+%             W(:,:,iBin) = D;
+
+        end
+%         v = zeros(nCh, 1);  % source stering
+%         for iBin=1:nBins
+%             for iCh=1:nCh
+%                 for iiCh=1:nCh
+%                     d = W(:, iiCh, iBin)' * squeeze(Ukf(iCh,:,:, iBin)) * W(:, iiCh, iBin);
+%                     if iCh~=iiCh
+%                         u = W(:, iCh, iBin)' * squeeze(Ukf(iCh,:,:, iBin)) * W(:, iCh, iBin);
+%                         v(iiCh, 1) = u / d;
+%                     else
+%                         v(iiCh, 1) = 1 - 1/sqrt(d);
+%                     end
+%                 end
+%                 W(:,:, iBin) = W(:,:, iBin) - v * W(:, iCh, iBin)';
+%             end
+%         end
+    end
+%     cost(iFrame) = local_calcCostFunction(powerSpectra, W, nBins, 1)
 
     %% Bakc projection
-%     eA = zeros(nCh, nCh);
+%     eA = zeros(nCh);
 %     for iBin=1:nBins
-%          A = inv(W(:,:, iBin)');
-%          for iCh=1:nCh
-%              eA(iCh,iCh) = A(1,iCh);
-%          end
-%          W(:,:,iBin) = eA * W(:,:,iBin);         
+%         A = inv(W(:, :, iBin));
+%         for iCh=1:nCh
+%             eA(iCh,iCh) = A(1,iCh);
+%         end
+%         W(:,:,iBin) = eA * W(:,:, iBin);
+%     end
+%     D = zeros(nCh, nCh);
+%     for iBin=1:nBins
+%         for iCh=1:nCh
+%             D(iCh,:) = W(:,iCh,iBin)';
+%         end
+%         A = inv(D) .* eye(nCh);
+%         W(:,:,iBin) = D * W(:,:,iBin);
 %     end
 %         
     %% Separation
-%     Ykf = complex(zeros(nCh, nBins));
-%     for iBin=1:nBins
-%         Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
-%     end
+    Ykf = complex(zeros(nCh, nBins));
+    for iBin=1:nBins
+        Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
+    end
 
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];

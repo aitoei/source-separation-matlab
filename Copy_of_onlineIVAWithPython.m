@@ -1,28 +1,21 @@
 clear;
 
-resampFreq = 16e3;
-
-[srcSig(:,:,1), sampFreq] = audioread('drums.wav'); % signal x channel x source (source image)
-[srcSig(:,:,2), sampFreq] = audioread('piano.wav'); % signal x channel x source (source image)
-srcSigResample(:,:,1) = resample(srcSig(:,:,1), resampFreq, sampFreq, 100); % resampling for reducing computational cost
-srcSigResample(:,:,2) = resample(srcSig(:,:,2), resampFreq, sampFreq, 100); % resampling for reducing computational cost
-
 % Mix source images of each channel to produce observed mixture signal
-mixSig(1, :) = srcSigResample(:,1,1) + srcSigResample(:,1,2);
-mixSig(2, :) = srcSigResample(:,2,1) + srcSigResample(:,2,2);
-if abs(max(max(mixSig))) > 1 % check clipping
-    error('Cliping detected while mixing.\n');
-end
+[mixSig(1, :), fs] = audioread("mix_online_0.wav");
+[mixSig(2, :), fs] = audioread("mix_online_1.wav");
+[mixSig(3, :), fs] = audioread("mix_online_2.wav");
+% if abs(max(max(mixSig))) > 1 % check clipping
+%     error('Cliping detected while mixing.\n');
+% end
 
 [nCh, nSamples] = size(mixSig);
 
-nFft = 512;
+nFft = 4096;
 nOverlap = 2;
 nDelay = nOverlap - 1;
 nHop = nFft / nOverlap;
-% winFunc = hamming(nFft, "periodic").';
-w=hann(nFft, 'periodic');
-winFunc=sqrt(w*2.0*nHop/nFft).';
+winFunc = hamming(nFft, "periodic").';
+
 
 nFrame = floor(nSamples / nHop) - 1;
 
@@ -51,13 +44,13 @@ est = complex(zeros(nBins, nCh));
 Ukf  = zeros(nCh, nCh, nCh, nBins);
 for iBin=1:nBins
     for iCh=1:nCh
-        Ukf(iCh,:,:, iBin) = complex(eye(nCh))*1e-3;
+        Ukf(iCh,:,:, iBin) = complex(eye(nCh))*1e-9;
     end
 end
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
-forgetCoefs = 0.999;
+forgetCoefs = 0.99;
 
 
 for iFrame=1:nFrame
@@ -80,71 +73,62 @@ for iFrame=1:nFrame
     Xkf = spectraHalf;
     Ykf = zeros(size(Xkf));
     %% processing
-    for iIter=1:1
-        %% Multiply demix matrix for each bin
+    for iIter=1:2
         for iBin=1:(nBins)
             YkfEst(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
         end
-        %% Calculate power spectrogram
         for iCh=1:nCh
             for iBin=1:nBins
                 powerSpectra(iCh, iBin) = real(YkfEst(iCh, iBin)).^2 + imag(YkfEst(iCh, iBin)).^2;
             end
         end
-        %% Calculate source model (Gauss) 全周波数が共通分散
-%         r(iFrame,:) = sqrt(sum(powerSpectra, 2));
-        r = sum(powerSpectra, 2); % (nSource x 1)
-        %% Calculate weighted Covariance ( sphercical laplace distribution )
-        weight = 1 ./ (2 * r);
-        
-        for iBin=1:nBins
-            for iCh=1:nCh
-                Ucur = (weight(iCh) * Xkf(:, iBin) * Xkf(:, iBin)');
+        r = sqrt(sum(powerSpectra, 2)); % (nCh x 1)
+
+        for iCh=1:nCh
+            for iBin=1:(nBins)
+                YkfEst(iCh, iBin) = W(iCh,:, iBin) * Xkf(:, iBin);
+            end
+
+            for iBin=1:nBins
+                powerSpectra(iCh, iBin) = real(YkfEst(iCh, iBin)).^2 + imag(YkfEst(iCh, iBin)).^2;
+            end
+            %% Calculate source model
+            r = sqrt(sum(powerSpectra, 2)); % (nCh x 1)
+            %% Calculate contrast function
+            weight = 1 ./ (2 * r); % (nCh x 1)
+            %% 
+            for iBin=1:nBins
+                Wf = W(:, :, iBin);
+                %% Calculate covariance
+                Ucur = (weight(iCh) * Xkf(:, iBin)) * Xkf(:, iBin)';
                 Upre = squeeze(Ukf(iCh, :, :, iBin));
                 U = Upre * forgetCoefs +  (1 - forgetCoefs) * Ucur;
                 Ukf(iCh, :, :, iBin) = U;
             end
-        end
-
-        %% Update demix matrix
-        for iBin=1:nBins
-            Wf = W(:, :, iBin);
-            Wnew = zeros(nCh, nCh);
-            for iCh=1:nCh
-                U = squeeze(Ukf(iCh, :, :, iBin));
-                WU = Wf * U  + eye(nCh)*1e-3;
+            for iBin=1:nBins
+                %% Update demix matrix
+                WU = Wf  * squeeze(Ukf(iCh,:,:,iBin));
                 WUinv = inv(WU);
-                Wnew(:, iCh) = WUinv(:, iCh);
-%                 d = sqrt(Wf(:,iCh)' * U * Wf(:,iCh));
-%                 W(:,iCh,iBin) = WUinv(:,iCh);
-%                 W(:,iCh,iBin) = W(:,iCh,iBin) / sqrt(W(:,iCh,iBin)' * squeeze(Ukf(iCh, :, :, iBin)) * W(:,iCh,iBin));
+                w = WUinv(iCh, :);
+                denom = w * U * w';
+                w = w / sqrt(denom);
+                W(iCh, :, iBin) = w;
             end
-            W(:,:,iBin) = Wnew;
-            Ykf(:,iBin) = (Wnew * Xkf(:, iBin));
-            
-            A = inv(Wnew);
-            for iCh=1:nCh
-                Ykf(iCh,iBin) = A(iCh,:) * (Wnew * Xkf(:, iBin));
-            end
+            A = W(:,:,1);
         end
     end
 
+    %% restore scaling (projection back method)
+    eA = zeros(nCh, nCh);
+    for iBin=1:nBins
+         A = inv(W(:,:, iBin));
+         for iCh=1:nCh
+             eA(iCh,iCh) = A(1,iCh);
+         end
+         W(:,:,iBin) = eA * W(:,:,iBin);
+         Ykf(:, iBin) = W(:, :, iBin) * Xkf(:, iBin);
+    end
 
-    %% Bakc projection
-%     eA = zeros(nCh, nCh);
-%     for iBin=1:nBins
-%          A = inv(W(:,:, iBin)');
-%          for iCh=1:nCh
-%              eA(iCh,iCh) = A(1,iCh);
-%          end
-%          W(:,:,iBin) = eA * W(:,:,iBin);         
-%     end
-%         
-    %% Separation
-%     Ykf = complex(zeros(nCh, nBins));
-%     for iBin=1:nBins
-%         Ykf(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
-%     end
 
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];

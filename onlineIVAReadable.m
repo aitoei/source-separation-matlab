@@ -16,7 +16,7 @@ end
 
 [nCh, nSamples] = size(mixSig);
 
-nFft = 512;
+nFft = 4096;
 nOverlap = 2;
 nDelay = nOverlap - 1;
 nHop = nFft / nOverlap;
@@ -59,7 +59,7 @@ powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
 forgetCoefs = 0.999;
 
-
+isFirst = true;
 for iFrame=1:nFrame
     %% Extract Signal
     startIndex = (iFrame - 1) * nHop + 1;
@@ -80,7 +80,7 @@ for iFrame=1:nFrame
     Xkf = spectraHalf;
     Ykf = zeros(size(Xkf));
     %% processing
-    for iIter=1:1
+    for iIter=1:2
         %% Multiply demix matrix for each bin
         for iBin=1:(nBins)
             YkfEst(:, iBin) = W(:,:, iBin) * Xkf(:, iBin);
@@ -92,11 +92,10 @@ for iFrame=1:nFrame
             end
         end
         %% Calculate source model (Gauss) 全周波数が共通分散
-%         r(iFrame,:) = sqrt(sum(powerSpectra, 2));
         r = sum(powerSpectra, 2); % (nSource x 1)
         %% Calculate weighted Covariance ( sphercical laplace distribution )
 %         weight = 1 ./ (2 * r);
-        weight = (1-forgetCoefs).*(1 ./ (2 * sqrt(r)));
+        weight = (1 ./ (2 * sqrt(r)));
         for iBin=1:nBins
             %% Update covariance matrix
             for iCh=1:nCh
@@ -106,32 +105,34 @@ for iFrame=1:nFrame
                 Ukf(iCh, :, :, iBin) = U;
             end
             %% Update demix matrix
-            Wf = W(:, :, iBin);
+            Wf = W(:, :, iBin)';
             Wnew = zeros(nCh, nCh);
             for iCh=1:nCh
                 U = squeeze(Ukf(iCh, :, :, iBin));
                 WU = Wf * U  + eye(nCh)*1e-6;
                 WUinv = inv(WU);
-                Wnew(:, iCh) = conj(WUinv(:, iCh));
+                wi = WUinv(:, iCh);
+                wi = wi / sqrt(wi' * U * wi);
+                Wnew(:, iCh) = wi;
             end
-            W(:, :, iCh) = Wnew';
 
             %% Projection back
-            A = inv(Wnew');
+            A = pinv(Wnew);
             
             scaleW = zeros(nCh, nCh);
             for iCh=1:nCh
-                scaleW(iCh, iCh) = A(iCh,iCh);
+                scaleW(iCh, iCh) = A(1, iCh);
             end
-
-            Wnew = scaleW * Wnew';
             
             %% Separation
-            Ykf(:, iBin) = Wnew' * Xkf(:, iBin);
-
-
+            Ykf(:, iBin) = Wnew * Xkf(:, iBin);
+            Ykf(1, iBin) = Ykf(1, iBin) * A(1,1);
+            Ykf(2, iBin) = Ykf(2, iBin) * A(1,2);
+            
+            W(:, :, iBin) = Wnew;
         end
     end
+    cost(iFrame) = local_calcCostFunction(powerSpectra, W, 1, nBins);
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];
     
