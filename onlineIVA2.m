@@ -105,7 +105,6 @@ for iFrame=1:nFrame
                 Ukf(iCh, :, :, iBin) = U;
             end
             Wnew = zeros(nCh, nBins);
-            E = eye(nCh);
             %% Update demix matrix
             for iBin=1:nBins
                 Wf = W(:, :, iBin);
@@ -131,7 +130,6 @@ for iFrame=1:nFrame
          Ykf(:, iBin) = W(:, :, iBin) * Xkf(:, iBin);
     end
 
-
     processedSigSpectraHalf = Ykf;
     processedSigSpectra = [processedSigSpectraHalf flip(conj(processedSigSpectraHalf(:, 2:nFft/2)), 2)];
     
@@ -147,6 +145,5 @@ for iFrame=1:nFrame
     %% Delay
     processedSigDelay = processedSig(:, nHop+1:nFft);
     sigDelay = sig;
-
 end
 
