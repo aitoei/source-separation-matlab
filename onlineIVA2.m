@@ -58,7 +58,7 @@ end
 
 powerSpectra = zeros(nCh, nBins);
 YkfEst = zeros(nCh, nBins);
-forgetCoefs = 0.99;
+forgetCoefs = 0.97;
 
 
 for iFrame=1:nFrame
@@ -82,7 +82,7 @@ for iFrame=1:nFrame
     Ykf = zeros(size(Xkf));
     
     %% Source Sepration processing
-    for iIter=1:5
+    for iIter=1:2
         YkfEst = zeros(1, nBins);
         powerSpectra = zeros(1, nBins);
         for iCh=1:nCh
